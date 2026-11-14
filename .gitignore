@@ -1,0 +1,13 @@
+# Build output — produced by build.ps1
+Hearth.exe
+*.pdb
+
+# Editor / assistant / OS clutter
+.claude/
+.vs/
+.vscode/
+Thumbs.db
+desktop.ini
+
+# Local scratch folders
+_*/
