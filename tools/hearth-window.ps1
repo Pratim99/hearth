@@ -17,7 +17,7 @@
 # Usage:
 #   hearth-window.ps1                    open the window
 #   hearth-window.ps1 -InstallShortcut   make the Start menu "Hearth" shortcut open this window
-#   hearth-window.ps1 -FolderShortcut    put an "Open Hearth" shortcut next to Hearth.exe (build.ps1 does this)
+#   hearth-window.ps1 -FolderShortcut    put an "Open Hearth" shortcut next to Hearth.exe (Open Hearth.cmd does the same job)
 param(
     [switch]$InstallShortcut,
     [switch]$FolderShortcut,

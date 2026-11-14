@@ -1,5 +1,5 @@
-# Build output — produced by build.ps1
-Hearth.exe
+# Hearth.exe is kept in the repository so a download can be run straight away.
+# build.ps1 replaces it with your own build.
 *.pdb
 # Shortcuts hold this PC's own paths; build.ps1 recreates "Open Hearth.lnk"
 *.lnk

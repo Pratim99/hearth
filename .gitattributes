@@ -1,0 +1,6 @@
+# Keep Windows script files in Windows line endings, and never alter binaries.
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.exe binary
+*.dll binary
+*.ico binary

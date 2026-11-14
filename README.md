@@ -30,33 +30,31 @@ No SDKs or package managers are needed. The one bundled third-party component is
 
 ## Running Hearth
 
-### 1. Build `Hearth.exe`
+### 1. Download it
 
-The built program is not stored in this repository, so build it once. It takes a few seconds and uses only what Windows already has.
+1. On the repository page, press **Code**, then **Download ZIP**.
+2. Extract the zip to a folder you will keep, for example `Documents\Hearth`.
 
-1. Download or clone this repository.
-2. Open PowerShell in the repository folder and run:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File build.ps1
-   ```
-
-This writes `Hearth.exe` into the folder (a single file with the interface built in) and puts a shortcut called **Open Hearth** next to it.
+That is all. The folder already contains `Hearth.exe`; nothing needs installing or building.
 
 ### 2. Start it
 
-**The usual way: one window with both tabs.** Double-click **Open Hearth** in the folder. The window has two tabs at the top: **Hearth** and **Cloud AI**.
+**Double-click `Open Hearth`** in the folder (it shows as `Open Hearth.cmd` if Windows is set to show file extensions). One window opens with two tabs at the top: **Hearth** and **Cloud AI**.
 
-To also have Hearth on the Start menu, run this once:
+Hearth is not code-signed, so Windows may object the first time:
+
+- **"Windows protected your PC".** Choose **More info**, then **Run anyway**.
+- **Smart App Control blocks it.** On PCs where that Windows feature is switched on there is no "run anyway". Delete the extracted folder, right-click the downloaded zip, choose **Properties**, tick **Unblock**, press **OK**, and extract it again. That tells Windows you trust this download. Windows may still refuse `Hearth.exe` itself; see the table under "If something goes wrong".
+
+Keep the folder together: `Open Hearth` needs `Hearth.exe` and the `tools` folder beside it.
+
+To also have Hearth on the Start menu, run this once in PowerShell from the folder:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\hearth-window.ps1 -InstallShortcut
 ```
 
-Keep the `tools` folder and `Hearth.exe` where they are; both shortcuts point at them. If you move the folder, run `build.ps1` again, or recreate the folder shortcut with `tools\hearth-window.ps1 -FolderShortcut`.
-
 **Local only, without the Cloud AI tab.** Double-click `Hearth.exe` itself. It opens the same Hearth interface in its own window, with no Cloud AI tab, and needs nothing else beside it.
-
 Either way:
 
 - Starting Hearth again while it is open opens another window onto the same session.
@@ -109,7 +107,7 @@ Deleting the whole folder resets Hearth. Deleting just `cloud-view` signs you ou
 | A model is listed as **Blocked — not local** | It is a cloud-hosted model. The Hearth tab only runs models on this PC; use the Cloud AI tab for cloud services. |
 | A model you expect is missing from Discover or Hugging Face | Check the **Model sources** level at the top of that screen; community uploads are hidden unless you choose **Everything**. |
 | "Hearth has stopped" covers the window | Close the window and open Hearth again. |
-| Hearth opens without the Cloud AI tab | You started `Hearth.exe` directly. Close it and use the **Open Hearth** shortcut (or the Start menu entry) instead. |
+| Hearth opens without the Cloud AI tab | You started `Hearth.exe` directly. Close it and double-click **Open Hearth** (or use the Start menu entry) instead. |
 | "Hearth is already open in another window that this one cannot join" | Close the other Hearth window, wait a few seconds, and open Hearth again. |
 | The window says the `tools\webview2` folder is missing | Restore that folder from the repository, or run `Hearth.exe` directly without the Cloud AI tab. |
 | A link in a Cloud AI pane does nothing, or part of a page fails to load | It leads to an address outside the allowed sites, which the tab blocks by design. Press **Home** in that pane to go back to the site's start page. |
@@ -124,7 +122,7 @@ These are optional; normal use needs none of them.
 | Command | Effect |
 | --- | --- |
 | `tools\hearth-window.ps1 -InstallShortcut` | Make the Start menu "Hearth" shortcut open the tabbed window. |
-| `tools\hearth-window.ps1 -FolderShortcut` | Recreate the **Open Hearth** shortcut next to `Hearth.exe`. |
+| `tools\hearth-window.ps1 -FolderShortcut` | Create an **Open Hearth** shortcut (with Hearth's icon) next to `Hearth.exe`. It does the same job as `Open Hearth.cmd`. |
 | `tools\cloud-windows.ps1` | Show a small picker, then open up to three restricted Edge windows side by side. |
 | `tools\cloud-windows.ps1 -Sites claude,chatgpt` | Open those sites directly (one to three of `claude`, `chatgpt`, `gemini`). Opening a new set closes the previous one. |
 | `tools\cloud-windows.ps1 -Close` | Close those windows. |
@@ -150,6 +148,8 @@ Hearth itself uses the internet only to search the model catalogs (your search w
 ## Developing
 
 ```
+Hearth.exe                the built program (local service and the local-only window)
+Open Hearth.cmd           double-click launcher: opens the window with both tabs
 src/                      C# backend: local HTTP server, Ollama relay, guardrails, catalogs, storage
 app/                      interface of the Hearth tab (index.html, css/, js/)
 tools/hearth-window.ps1   the tabbed window: hosts the Hearth tab and the Cloud AI tab
@@ -158,6 +158,6 @@ tools/webview2/           Microsoft WebView2 SDK files used by hearth-window.ps1
 tools/make-icon.ps1       draws the app icon
 ```
 
-`build.ps1` compiles `src\*.cs` with the C# compiler that ships with Windows and builds the interface (`app\`) into the exe. The interface is plain HTML, CSS and JavaScript with no build step. While developing, an `app` folder next to the exe takes priority over the built-in copy, so interface edits show up after reopening the window, without a rebuild; backend changes need `build.ps1` again.
+The repository includes a built `Hearth.exe` so a download can be run straight away. To build your own, run `powershell -ExecutionPolicy Bypass -File build.ps1`: it compiles `src\*.cs` with the C# compiler that ships with Windows, builds the interface (`app\`) into the exe, and replaces `Hearth.exe`. On a PC with Smart App Control switched on, Windows may refuse to run a freshly built exe; keep a copy of the working one before rebuilding. The interface is plain HTML, CSS and JavaScript with no build step. While developing, an `app` folder next to the exe takes priority over the built-in copy, so interface edits show up after reopening the window, without a rebuild; backend changes need `build.ps1` again.
 
 The list of sites the Cloud AI tab may reach is at the top of `tools\hearth-window.ps1` (and repeated in `tools\cloud-windows.ps1`); adding a site means adding it, and the hosts it needs, in both.
