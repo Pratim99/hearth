@@ -41,19 +41,21 @@ The built program is not stored in this repository, so build it once. It takes a
    powershell -ExecutionPolicy Bypass -File build.ps1
    ```
 
-This writes `Hearth.exe` into the folder. It is a single file with the interface built in.
+This writes `Hearth.exe` into the folder (a single file with the interface built in) and puts a shortcut called **Open Hearth** next to it.
 
 ### 2. Start it
 
-**The usual way: one window with both tabs.** Add Hearth to the Start menu once:
+**The usual way: one window with both tabs.** Double-click **Open Hearth** in the folder. The window has two tabs at the top: **Hearth** and **Cloud AI**.
+
+To also have Hearth on the Start menu, run this once:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\hearth-window.ps1 -InstallShortcut
 ```
 
-Then open **Hearth** from the Start menu. (Or run `tools\hearth-window.ps1` directly.) The window has two tabs at the top: **Hearth** and **Cloud AI**. Keep the `tools` folder and `Hearth.exe` where they are; the shortcut points at them.
+Keep the `tools` folder and `Hearth.exe` where they are; both shortcuts point at them. If you move the folder, run `build.ps1` again, or recreate the folder shortcut with `tools\hearth-window.ps1 -FolderShortcut`.
 
-**Local only, without the Cloud AI tab.** Double-click `Hearth.exe`. It opens the same Hearth interface in its own window and needs nothing else beside it.
+**Local only, without the Cloud AI tab.** Double-click `Hearth.exe` itself. It opens the same Hearth interface in its own window, with no Cloud AI tab, and needs nothing else beside it.
 
 Either way:
 
@@ -107,6 +109,8 @@ Deleting the whole folder resets Hearth. Deleting just `cloud-view` signs you ou
 | A model is listed as **Blocked — not local** | It is a cloud-hosted model. The Hearth tab only runs models on this PC; use the Cloud AI tab for cloud services. |
 | A model you expect is missing from Discover or Hugging Face | Check the **Model sources** level at the top of that screen; community uploads are hidden unless you choose **Everything**. |
 | "Hearth has stopped" covers the window | Close the window and open Hearth again. |
+| Hearth opens without the Cloud AI tab | You started `Hearth.exe` directly. Close it and use the **Open Hearth** shortcut (or the Start menu entry) instead. |
+| "Hearth is already open in another window that this one cannot join" | Close the other Hearth window, wait a few seconds, and open Hearth again. |
 | The window says the `tools\webview2` folder is missing | Restore that folder from the repository, or run `Hearth.exe` directly without the Cloud AI tab. |
 | A link in a Cloud AI pane does nothing, or part of a page fails to load | It leads to an address outside the allowed sites, which the tab blocks by design. Press **Home** in that pane to go back to the site's start page. |
 | A site in the Cloud AI tab will not let you sign in | Use the fallback Edge windows: `tools\cloud-windows.ps1`. |
@@ -120,6 +124,7 @@ These are optional; normal use needs none of them.
 | Command | Effect |
 | --- | --- |
 | `tools\hearth-window.ps1 -InstallShortcut` | Make the Start menu "Hearth" shortcut open the tabbed window. |
+| `tools\hearth-window.ps1 -FolderShortcut` | Recreate the **Open Hearth** shortcut next to `Hearth.exe`. |
 | `tools\cloud-windows.ps1` | Show a small picker, then open up to three restricted Edge windows side by side. |
 | `tools\cloud-windows.ps1 -Sites claude,chatgpt` | Open those sites directly (one to three of `claude`, `chatgpt`, `gemini`). Opening a new set closes the previous one. |
 | `tools\cloud-windows.ps1 -Close` | Close those windows. |

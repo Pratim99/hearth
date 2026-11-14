@@ -22,3 +22,11 @@ $resources = Get-ChildItem $appDir -Recurse -File | ForEach-Object {
     $resources $sources
 if ($LASTEXITCODE -ne 0) { throw "Build failed." }
 Write-Host "Built $out"
+
+# A shortcut next to the exe that opens Hearth with both tabs (Hearth and Cloud AI).
+$window = Join-Path $root "tools\hearth-window.ps1"
+if (Test-Path $window) {
+    & $window -FolderShortcut | Out-Null
+    Write-Host 'To start Hearth with the Cloud AI tab, double-click "Open Hearth" in this folder.'
+    Write-Host 'Hearth.exe on its own opens the local-only window, without the Cloud AI tab.'
+}

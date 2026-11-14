@@ -1,6 +1,8 @@
 # Build output — produced by build.ps1
 Hearth.exe
 *.pdb
+# Shortcuts hold this PC's own paths; build.ps1 recreates "Open Hearth.lnk"
+*.lnk
 
 # Editor / assistant / OS clutter
 .claude/

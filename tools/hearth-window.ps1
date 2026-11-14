@@ -17,8 +17,10 @@
 # Usage:
 #   hearth-window.ps1                    open the window
 #   hearth-window.ps1 -InstallShortcut   make the Start menu "Hearth" shortcut open this window
+#   hearth-window.ps1 -FolderShortcut    put an "Open Hearth" shortcut next to Hearth.exe (build.ps1 does this)
 param(
     [switch]$InstallShortcut,
+    [switch]$FolderShortcut,
     [string]$SelfTest        # internal: write a short report to this file, then exit
 )
 $ErrorActionPreference = "Stop"
@@ -53,8 +55,8 @@ function Test-AllowedHost([string]$hostName) {
     return $false
 }
 
-function Install-Shortcut {
-    $lnk = Join-Path ([Environment]::GetFolderPath("Programs")) "Hearth.lnk"
+function Install-Shortcut([string]$lnk) {
+    # A shortcut that opens this script without showing a console window.
     $shell = New-Object -ComObject WScript.Shell
     $sc = $shell.CreateShortcut($lnk)
     $sc.TargetPath = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -66,7 +68,8 @@ function Install-Shortcut {
     $sc.Save()
     return $lnk
 }
-if ($InstallShortcut) { Write-Output ("Shortcut updated: " + (Install-Shortcut)); return }
+if ($InstallShortcut) { Write-Output ("Start menu shortcut updated: " + (Install-Shortcut (Join-Path ([Environment]::GetFolderPath("Programs")) "Hearth.lnk"))); return }
+if ($FolderShortcut) { Write-Output ("Shortcut created: " + (Install-Shortcut (Join-Path $Root "Open Hearth.lnk"))); return }
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -TypeDefinition @'
@@ -82,12 +85,25 @@ public static class HearthShell
 
 function Show-Error([string]$text) { [void][System.Windows.Forms.MessageBox]::Show($text, "Hearth", "OK", "Error") }
 
+# Loads one of the WebView2 files, but only after confirming it is an intact file signed by Microsoft.
+# When Hearth was downloaded as a zip, Windows marks these files as "from the internet" and .NET then
+# refuses the ordinary way of loading them; the signature check is what makes loading them safe.
+function Import-MicrosoftAssembly([string]$path) {
+    $sig = Get-AuthenticodeSignature $path
+    if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notlike "*O=Microsoft Corporation*") {
+        throw "$(Split-Path -Leaf $path) is not an intact Microsoft-signed file, so Hearth will not load it. Restore the tools\webview2 folder from the repository."
+    }
+    [void][System.Reflection.Assembly]::UnsafeLoadFrom($path)
+}
+
 try {
     if (-not (Test-Path (Join-Path $Sdk "Microsoft.Web.WebView2.WinForms.dll"))) { throw "The tools\webview2 folder is missing, so the Hearth window cannot open. Hearth.exe still works on its own." }
     if (-not (Test-Path $Exe)) { throw "Hearth.exe was not found next to the tools folder. Build it first with build.ps1." }
     $env:PATH = "$Sdk;$env:PATH"
-    Add-Type -Path (Join-Path $Sdk "Microsoft.Web.WebView2.Core.dll")
-    Add-Type -Path (Join-Path $Sdk "Microsoft.Web.WebView2.WinForms.dll")
+    Import-MicrosoftAssembly (Join-Path $Sdk "Microsoft.Web.WebView2.Core.dll")
+    Import-MicrosoftAssembly (Join-Path $Sdk "Microsoft.Web.WebView2.WinForms.dll")
+    $loader = Get-AuthenticodeSignature (Join-Path $Sdk "WebView2Loader.dll")
+    if ($loader.Status -ne "Valid" -or $loader.SignerCertificate.Subject -notlike "*O=Microsoft Corporation*") { throw "WebView2Loader.dll is not an intact Microsoft-signed file, so Hearth will not load it. Restore the tools\webview2 folder from the repository." }
     New-Item -ItemType Directory -Force $DataDir | Out-Null
 
     # ------------------------------------------------------------ start (or join) the local Hearth service
@@ -97,7 +113,11 @@ try {
             if (-not (Test-Path $sessionFile)) { return $null }
             $u = (Get-Content $sessionFile -Raw).Trim()
             $port = ([uri]$u).Port
-            $r = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/api/ping" -TimeoutSec 2
+            # Ask something only a holder of the right session may ask, so a leftover file from an
+            # earlier run is not mistaken for a live session.
+            $ws = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+            $ws.Cookies.Add((New-Object System.Net.Cookie("hearth", ($u -split "t=")[1], "/", "127.0.0.1")))
+            $r = Invoke-WebRequest -UseBasicParsing -WebSession $ws -Uri "http://127.0.0.1:$port/api/state" -TimeoutSec 3
             if ($r.StatusCode -eq 200) { return $u }
         } catch { }
         return $null
@@ -107,7 +127,12 @@ try {
         Start-Process -FilePath $Exe -ArgumentList "--no-window" | Out-Null
         for ($i = 0; $i -lt 60 -and -not $session; $i++) { Start-Sleep -Milliseconds 250; $session = Get-LiveSession }
     }
-    if (-not $session) { throw "Hearth's local service did not start. Try running Hearth.exe directly to see what Windows reports." }
+    if (-not $session) {
+        $busy = $false
+        try { $busy = (Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:47610/api/ping" -TimeoutSec 2).StatusCode -eq 200 } catch { }
+        if ($busy) { throw "Hearth is already open in another window that this one cannot join. Close that window, wait a few seconds, and open Hearth again." }
+        throw "Hearth's local service did not start. Try running Hearth.exe directly to see what Windows reports."
+    }
     $hearthOrigin = ([uri]$session).GetLeftPart([UriPartial]::Authority)
 
     # ------------------------------------------------------------ window
