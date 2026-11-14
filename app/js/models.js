@@ -611,6 +611,6 @@ export async function openLocalPanel() {
     row('ok', 'Model sources are restricted', 'Security level: ' + (LEVELS.find((l) => l[0] === (S.sourceLevel || 'trusted')) || LEVELS[1])[1] + '. Downloads come only from the Ollama library and Hugging Face, are checked against this level again at download time, and repositories flagged by a security scan are refused.'),
     row('ok', 'The interface cannot call out', 'This window is locked to Hearth\'s local service: no analytics, fonts, scripts or other outside connections.'),
     row('ok', 'Files stay inside guardrails', 'Hearth only touches the folder you link to a project. Credential files, .git and anything you protect are locked, nothing is overwritten, and deletes go to the Recycle Bin.'),
-    row('info', 'When the internet is used', 'Only when you search for models (your search words go to ollama.com or huggingface.co) and when Ollama downloads a model you chose. Chats and files are never sent.')));
+    row('info', 'When the internet is used', 'When you search for models (your search words go to ollama.com or huggingface.co), when Ollama downloads a model you chose, and when you press Upload to send a project to your own GitHub account. Chats are never sent anywhere.')));
   modal({ title: 'Private by design', size: 'medium', body });
 }

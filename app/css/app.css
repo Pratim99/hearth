@@ -505,3 +505,16 @@ input[type=range] { flex: 1; accent-color: var(--accent); height: 4px; }
 .tc-diff .d-del { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--text-2); }
 .tc-diff .d-ctx { color: var(--text-3); }
 .tc-diff .d-skip { color: var(--text-3); font-family: var(--font); font-size: 11.5px; padding: 3px 11px; }
+
+/* ---------------------------------------------------------------- GitHub screen */
+.gh-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.gh-body { display: flex; flex-direction: column; gap: 12px; }
+.gh-title { display: flex; align-items: center; gap: 9px; font: 600 14px var(--font-display); }
+.gh-title .icon { color: var(--accent); }
+.gh-log { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.gh-step { display: flex; gap: 8px; align-items: baseline; color: var(--text-2); }
+.gh-step::before { content: "•"; color: var(--text-3); }
+.gh-step.ok::before { content: "✓"; color: var(--ok); }
+.gh-step.run::before { content: "…"; color: var(--accent); }
+.gh-step.bad { color: var(--danger); }
+.gh-step.bad::before { content: "✕"; color: var(--danger); }

@@ -4,6 +4,7 @@ import { h, icon, api, S, emit, on, $, clear, toast, fail, modal, popover, close
 import { refreshModels, openHub, openLocalPanel, activeDownloads } from './models.js';
 import { renderFilesTab, refreshTree } from './files.js';
 import { initMain, renderChatsTab, newChat } from './chat.js';
+import { github, refreshGitHub, openGitHub } from './github.js';
 
 let sb = null;
 
@@ -17,6 +18,7 @@ function buildSidebar() {
   const tabs = h('div', { class: 'sb-tabs' });
   const body = h('div', { class: 'sb-body' });
   const modelsBtn = h('button', { class: 'foot-btn', onClick: () => openHub(activeDownloads() ? 'discover' : 'installed') });
+  const githubBtn = h('button', { class: 'foot-btn', onClick: openGitHub });
   const pill = h('button', { class: 'local-pill', onClick: openLocalPanel });
 
   host.append(
@@ -24,8 +26,8 @@ function buildSidebar() {
     projectBtn,
     h('div', { class: 'sb-new' }, h('button', { class: 'btn block', onClick: () => { S.sidebarTab = 'chats'; drawTabs(); newChat(); } }, icon('plus'), 'New chat')),
     tabs, body,
-    h('div', { class: 'sb-foot' }, modelsBtn, pill));
-  sb = { themeBtn, projectBtn, tabs, body, modelsBtn, pill };
+    h('div', { class: 'sb-foot' }, modelsBtn, githubBtn, pill));
+  sb = { themeBtn, projectBtn, tabs, body, modelsBtn, githubBtn, pill };
   drawTheme(); drawProject(); drawTabs(); drawFoot();
 }
 
@@ -67,6 +69,9 @@ function drawFoot() {
   const n = activeDownloads();
   clear(sb.modelsBtn).append(icon('cube'), 'Models',
     n ? h('span', { class: 'badge accent' }, icon('download', 'sm'), n + ' downloading') : h('span', { class: 'badge' }, S.models.length + ' installed'));
+  const g = github.status;
+  clear(sb.githubBtn).append(icon('upload'), 'GitHub',
+    h('span', { class: 'badge' + (g.signedIn ? ' ok' : '') }, g.signedIn ? g.login : g.git ? 'Sign in' : 'Needs Git'));
   const up = S.ollama.running;
   sb.pill.classList.toggle('down', !up);
   clear(sb.pill).append(icon(up ? 'shield' : 'alert', 'lg'),
@@ -195,6 +200,7 @@ async function lifeline() {
 on('chats', () => { if (sb && S.sidebarTab === 'chats') renderChatsTab(sb.body); });
 on('models', () => { if (sb) drawFoot(); });
 on('downloads', () => { if (sb) drawFoot(); });
+on('github', () => { if (sb) drawFoot(); });
 on('edit-project', (id) => projectDialog(S.projects.find((p) => p.id === id) || S.project));
 
 async function boot() {
@@ -209,6 +215,7 @@ async function boot() {
   initMain();
   buildSidebar();
   await refreshModels();
+  refreshGitHub();
   emit('project');
   lifeline();
   setInterval(() => { if (!document.hidden) refreshModels(); }, 20000);

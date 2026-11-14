@@ -325,6 +325,31 @@ namespace Hearth
                     return;
                 }
 
+                // ---- GitHub (sign-in through Git's credential manager; uploads only when the user asks)
+                case "/api/github/status":
+                    SendJson(res, GitHub.Status());
+                    return;
+                case "/api/github/signin":
+                    RequirePost(post);
+                    SendJson(res, GitHub.SignIn());
+                    return;
+                case "/api/github/signout":
+                    RequirePost(post);
+                    SendJson(res, GitHub.SignOut());
+                    return;
+                case "/api/github/project":
+                    SendJson(res, GitHub.ProjectStatus(Q(q, "project")));
+                    return;
+                case "/api/github/upload":
+                    RequirePost(post);
+                    GitHub.Upload(res, Body(req));
+                    return;
+                case "/api/open-url":
+                    RequirePost(post);
+                    GitHub.OpenInBrowser(J.S(Body(req), "url", ""));
+                    SendJson(res, J.Make("ok", true));
+                    return;
+
                 // ---- chats
                 case "/api/chats":
                     SendJson(res, J.Make("chats", Store.ListChats(Q(q, "project"))));

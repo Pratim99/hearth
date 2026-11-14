@@ -57,6 +57,25 @@ namespace Hearth
         }
 
         /// <summary>
+        /// The same sensitive names expressed as Git ignore patterns, so uploads leave them out.
+        /// <see cref="Reason"/> remains the authority: uploads are re-checked against it afterwards.
+        /// </summary>
+        public static IEnumerable<string> IgnorePatterns()
+        {
+            foreach (string f in LockedFolders)
+                if (f != ".git" && !f.StartsWith("$") && !f.Contains(" ")) yield return f + "/";
+            yield return ".env";
+            yield return ".env.*";
+            foreach (string t in new[] { "example", "sample", "template", "dist" }) yield return "!.env." + t;
+            foreach (string n in SecretNames) yield return n;
+            foreach (string e in SecretExtensions) yield return "*" + e;
+            foreach (string k in new[] { "rsa", "dsa", "ecdsa", "ed25519" }) yield return "id_" + k + "*";
+            yield return "!id_*.pub";
+            foreach (string s in new[] { "service-account*.json", "service_account*.json", "serviceaccount*.json", "*.secret", "*.secrets", "*.secret.*", "*.secrets.*" })
+                yield return s;
+        }
+
+        /// <summary>
         /// Why a project-relative path is locked, or null if it is free to work with.
         /// <paramref name="rel"/> uses forward slashes.
         /// </summary>
