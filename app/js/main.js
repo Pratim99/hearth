@@ -71,7 +71,7 @@ function drawFoot() {
     n ? h('span', { class: 'badge accent' }, icon('download', 'sm'), n + ' downloading') : h('span', { class: 'badge' }, S.models.length + ' installed'));
   const g = github.status;
   clear(sb.githubBtn).append(icon('upload'), 'GitHub',
-    h('span', { class: 'badge' + (g.signedIn ? ' ok' : '') }, g.signedIn ? g.login : g.git ? 'Sign in' : 'Needs Git'));
+    h('span', { class: 'badge' + (g.signedIn ? ' ok' : '') }, g.signedIn ? g.login : g.git && g.gh ? 'Sign in' : 'Needs setup'));
   const up = S.ollama.running;
   sb.pill.classList.toggle('down', !up);
   clear(sb.pill).append(icon(up ? 'shield' : 'alert', 'lg'),

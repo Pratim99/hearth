@@ -4,36 +4,30 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Hearth
 {
     /// <summary>
-    /// GITHUB SIGN-IN AND PROJECT UPLOAD.
+    /// GITHUB SIGN-IN AND PROJECT UPLOAD, through the official tools.
     ///
-    /// Sign-in is delegated to Git's own credential system (Git Credential Manager, which ships with
-    /// Git for Windows and opens GitHub's sign-in window), so Hearth never sees a password. The access
-    /// token Git hands back is used only inside this class, only for requests to api.github.com, and is
-    /// never written to disk by Hearth, logged, or sent to the interface.
+    /// Hearth does not talk to GitHub itself and never holds a password or access token. Signing in,
+    /// creating a repository and uploading are all done by the GitHub CLI ("gh") and Git, which the
+    /// user installs separately; Hearth only starts them and reports what they say.
     ///
     /// Uploading keeps the file guardrails: credential files, sensitive folders and anything the user
-    /// marked as protected are excluded, and the upload is refused if any of them is already tracked.
+    /// marked as protected are left out, and the upload is refused if any of them is already tracked.
     /// Nothing is uploaded unless the user presses the button, and new repositories are private unless
     /// the user chooses otherwise.
     /// </summary>
     static class GitHub
     {
-        const string ApiBase = "https://api.github.com";
         static readonly object Lock = new object();
-        static string _gitPath;
-        static bool _gitSearched;
-        static string _cachedKey;
-        static Dictionary<string, object> _cachedUser;
-        static DateTime _cachedAt;
+        static string _git, _gh;
+        static bool _searched;
 
-        class GitResult
+        class RunResult
         {
             public int Code = -1;
             public string Out = "", Err = "";
@@ -41,31 +35,40 @@ namespace Hearth
             public bool Ok { get { return Code == 0 && !TimedOut; } }
         }
 
-        // ---------------------------------------------------------------- running git
+        // ---------------------------------------------------------------- finding and running the tools
 
-        static string GitPath()
+        static string Find(string exe, params string[] wellKnown)
+        {
+            var candidates = new List<string>();
+            foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
+                if (!string.IsNullOrWhiteSpace(dir)) candidates.Add(Path.Combine(dir.Trim().Trim('"'), exe));
+            foreach (string root in new[] { Environment.GetEnvironmentVariable("ProgramFiles"), Environment.GetEnvironmentVariable("ProgramW6432"),
+                Environment.GetEnvironmentVariable("ProgramFiles(x86)"), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs") })
+                if (!string.IsNullOrEmpty(root))
+                    foreach (string rel in wellKnown) candidates.Add(Path.Combine(root, rel));
+            foreach (string c in candidates)
+            {
+                try { if (File.Exists(c)) return c; } catch { }
+            }
+            return null;
+        }
+
+        static void Locate()
         {
             lock (Lock)
             {
-                if (_gitSearched) return _gitPath;
-                _gitSearched = true;
-                var candidates = new List<string>();
-                foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
-                    if (!string.IsNullOrWhiteSpace(dir)) candidates.Add(Path.Combine(dir.Trim().Trim('"'), "git.exe"));
-                foreach (string root in new[] { Environment.GetEnvironmentVariable("ProgramFiles"), Environment.GetEnvironmentVariable("ProgramW6432"),
-                    Environment.GetEnvironmentVariable("ProgramFiles(x86)"), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs") })
-                    if (!string.IsNullOrEmpty(root)) candidates.Add(Path.Combine(root, "Git\\cmd\\git.exe"));
-                foreach (string c in candidates)
-                {
-                    try { if (File.Exists(c)) { _gitPath = c; break; } } catch { }
-                }
-                return _gitPath;
+                if (_searched && _git != null && _gh != null) return;
+                _searched = true;
+                if (_git == null) _git = Find("git.exe", "Git\\cmd\\git.exe");
+                if (_gh == null) _gh = Find("gh.exe", "GitHub CLI\\gh.exe");
             }
         }
 
-        static void RequireGit()
+        static void RequireTools()
         {
-            if (GitPath() == null) throw new ApiException(424, "Git for Windows is not installed on this PC. Install it, then reopen Hearth.");
+            Locate();
+            if (_git == null) throw new ApiException(424, "Git for Windows is not installed on this PC.");
+            if (_gh == null) throw new ApiException(424, "The GitHub CLI is not installed on this PC.");
         }
 
         static string Quote(string a)
@@ -83,29 +86,42 @@ namespace Hearth
             return sb.Append('\\', slashes * 2).Append('"').ToString();
         }
 
-        static GitResult Git(string cwd, string stdin, int timeoutMs, bool interactive, params string[] args)
+        static ProcessStartInfo StartInfo(string exe, string cwd, IEnumerable<string> args)
         {
-            var all = new List<string> { "-c", "core.askPass=", "-c", "core.quotePath=false" };
-            all.AddRange(args);
-            var psi = new ProcessStartInfo(GitPath(), string.Join(" ", all.Select(Quote)))
+            var psi = new ProcessStartInfo(exe, string.Join(" ", args.Select(Quote)))
             {
                 WorkingDirectory = cwd, UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
             };
-            psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";                      // never wait on a hidden console
-            psi.EnvironmentVariables["GCM_INTERACTIVE"] = interactive ? "auto" : "never"; // sign-in windows only when asked for
-            var result = new GitResult();
+            // The GitHub CLI runs Git itself, so make sure both tools can find each other even when they
+            // were installed after this Windows session started (and so are not on PATH yet).
+            var dirs = new List<string>();
+            if (_git != null) dirs.Add(Path.GetDirectoryName(_git));
+            if (_gh != null) dirs.Add(Path.GetDirectoryName(_gh));
+            dirs.Add(Environment.GetEnvironmentVariable("PATH") ?? "");
+            psi.EnvironmentVariables["PATH"] = string.Join(";", dirs);
+            psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";     // never wait on a hidden console
+            psi.EnvironmentVariables["GCM_INTERACTIVE"] = "never";
+            psi.EnvironmentVariables["GH_PROMPT_DISABLED"] = "1";
+            psi.EnvironmentVariables["GH_NO_UPDATE_NOTIFIER"] = "1";
+            psi.EnvironmentVariables["NO_COLOR"] = "1";
+            return psi;
+        }
+
+        static RunResult Run(string exe, string cwd, int timeoutMs, params string[] args)
+        {
+            var result = new RunResult();
             var so = new StringBuilder();
             var se = new StringBuilder();
-            using (var p = new Process { StartInfo = psi })
+            using (var p = new Process { StartInfo = StartInfo(exe, cwd, args) })
             {
                 p.OutputDataReceived += (s, e) => { if (e.Data != null) lock (so) so.AppendLine(e.Data); };
                 p.ErrorDataReceived += (s, e) => { if (e.Data != null) lock (se) se.AppendLine(e.Data); };
                 p.Start();
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
-                try { if (stdin != null) p.StandardInput.Write(stdin); p.StandardInput.Close(); } catch { }
+                try { p.StandardInput.Close(); } catch { }
                 if (!p.WaitForExit(timeoutMs))
                 {
                     result.TimedOut = true;
@@ -122,147 +138,114 @@ namespace Hearth
             return result;
         }
 
-        static GitResult Git(string cwd, params string[] args) { return Git(cwd, null, 120000, false, args); }
+        static RunResult Git(string cwd, params string[] args)
+        {
+            var all = new List<string> { "-c", "core.askPass=", "-c", "core.quotePath=false" };
+            all.AddRange(args);
+            return Run(_git, cwd, 300000, all.ToArray());
+        }
 
-        static string GitError(GitResult r, string fallback)
+        static RunResult Gh(string cwd, int timeoutMs, params string[] args) { return Run(_gh, cwd, timeoutMs, args); }
+
+        static string Problem(RunResult r, string fallback)
         {
             if (r.TimedOut) return fallback + " (it took too long and was stopped)";
             string text = (r.Err != "" ? r.Err : r.Out).Trim();
             string last = text.Split('\n').Select(x => x.Trim()).LastOrDefault(x => x != "") ?? "";
-            last = Regex.Replace(last, @"^(fatal|error|remote):\s*", "", RegexOptions.IgnoreCase);
+            last = Regex.Replace(last, @"^(fatal|error|remote|GraphQL|HTTP \d+):\s*", "", RegexOptions.IgnoreCase);
             return last == "" ? fallback : fallback + ": " + last;
-        }
-
-        // ---------------------------------------------------------------- credentials (never leave this class)
-
-        const string CredentialRequest = "protocol=https\nhost=github.com\n\n";
-
-        static Dictionary<string, string> CredentialFill(bool interactive)
-        {
-            var r = Git(Path.GetTempPath(), CredentialRequest, interactive ? 300000 : 20000, interactive, "credential", "fill");
-            if (!r.Ok) return null;
-            var d = new Dictionary<string, string>();
-            foreach (string line in r.Out.Split('\n'))
-            {
-                int eq = line.IndexOf('=');
-                if (eq > 0) d[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
-            }
-            return d.ContainsKey("password") && d["password"] != "" ? d : null;
-        }
-
-        static string CredentialBlock(Dictionary<string, string> c)
-        {
-            return "protocol=https\nhost=github.com\nusername=" + (c.ContainsKey("username") ? c["username"] : "") + "\npassword=" + c["password"] + "\n\n";
-        }
-
-        static bool SignsInThroughCli()
-        {
-            var r = Git(Path.GetTempPath(), "config", "--get-all", "credential.https://github.com.helper");
-            return r.Out.IndexOf("gh", StringComparison.OrdinalIgnoreCase) >= 0 && r.Out.IndexOf("auth git-credential", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
-
-        // ---------------------------------------------------------------- GitHub API (api.github.com only)
-
-        static Dictionary<string, object> Api(string method, string path, string token, object body, out int status)
-        {
-            var uri = new Uri(ApiBase + path);
-            if (uri.Host != "api.github.com" || uri.Scheme != "https") throw new ApiException(500, "Refusing to send GitHub credentials anywhere but api.github.com.");
-            var req = (HttpWebRequest)WebRequest.Create(uri);
-            req.Method = method;
-            req.Timeout = 30000;
-            req.AllowAutoRedirect = false;
-            req.UserAgent = "Hearth-desktop";
-            req.Accept = "application/vnd.github+json";
-            req.Headers["Authorization"] = "Bearer " + token;
-            req.Headers["X-GitHub-Api-Version"] = "2022-11-28";
-            if (body != null)
-            {
-                byte[] b = Encoding.UTF8.GetBytes(J.Str(body));
-                req.ContentType = "application/json";
-                req.ContentLength = b.Length;
-                using (var s = req.GetRequestStream()) s.Write(b, 0, b.Length);
-            }
-            HttpWebResponse resp;
-            try { resp = (HttpWebResponse)req.GetResponse(); }
-            catch (WebException ex)
-            {
-                resp = ex.Response as HttpWebResponse;
-                if (resp == null) throw new ApiException(502, "Could not reach GitHub. Check your internet connection.");
-            }
-            using (resp)
-            using (var r = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
-            {
-                status = (int)resp.StatusCode;
-                string text = r.ReadToEnd();
-                try { return J.Obj(J.Parse(text)) ?? new Dictionary<string, object>(); }
-                catch { return new Dictionary<string, object>(); }
-            }
-        }
-
-        static Dictionary<string, object> Me(string token)
-        {
-            string key;
-            using (var sha = SHA256.Create()) key = Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(token)));
-            lock (Lock)
-            {
-                if (_cachedKey == key && _cachedUser != null && (DateTime.UtcNow - _cachedAt).TotalMinutes < 5) return _cachedUser;
-            }
-            int status;
-            var u = Api("GET", "/user", token, null, out status);
-            if (status == 401) return null;
-            if (status >= 400 || string.IsNullOrEmpty(J.S(u, "login"))) throw new ApiException(502, "GitHub did not accept the request (" + status + ").");
-            lock (Lock) { _cachedKey = key; _cachedUser = u; _cachedAt = DateTime.UtcNow; }
-            return u;
         }
 
         // ---------------------------------------------------------------- account
 
+        static string SignedInAs()
+        {
+            var r = Gh(Path.GetTempPath(), 20000, "auth", "status", "--hostname", "github.com");
+            if (!r.Ok) return null;
+            Match m = Regex.Match(r.Out + "\n" + r.Err, @"Logged in to github\.com (?:account|as) ([A-Za-z0-9\-]+)");
+            return m.Success ? m.Groups[1].Value : null;
+        }
+
         public static object Status()
         {
-            var s = J.Make("git", GitPath() != null, "signedIn", false, "login", "", "name", "", "viaCli", false);
-            if (GitPath() == null) return s;
-            try
-            {
-                var cred = CredentialFill(false);
-                if (cred == null) return s;
-                var me = Me(cred["password"]);
-                if (me == null) return s;
-                s["signedIn"] = true;
-                s["login"] = J.S(me, "login", "");
-                s["name"] = J.S(me, "name", "");
-                s["viaCli"] = SignsInThroughCli();
-            }
-            catch (ApiException ex) { s["error"] = ex.Message; }
+            Locate();
+            var s = J.Make("git", _git != null, "gh", _gh != null, "signedIn", false, "login", "");
+            if (_git == null || _gh == null) return s;
+            string login = SignedInAs();
+            if (login != null) { s["signedIn"] = true; s["login"] = login; }
             return s;
         }
 
-        /// <summary>Opens GitHub's sign-in window (through Git Credential Manager) and waits for the user to finish.</summary>
-        public static object SignIn()
+        /// <summary>
+        /// Runs the GitHub CLI's browser sign-in. The CLI prints a one-time code and opens github.com;
+        /// the code is passed to the window so the user can type it there. Streams newline-delimited JSON:
+        /// {"code": "XXXX-XXXX"}, then {"done": true, "login": "..."} or {"error": "..."}.
+        /// </summary>
+        public static void SignIn(HttpListenerResponse res)
         {
-            RequireGit();
-            var cred = CredentialFill(true);
-            if (cred == null)
-                throw new ApiException(401, SignsInThroughCli()
-                    ? "Git on this PC signs in through the GitHub CLI. Run \"gh auth login\" once, then come back."
-                    : "The GitHub sign-in was cancelled or did not finish.");
-            var me = Me(cred["password"]);
-            if (me == null)
+            RequireTools();
+            res.StatusCode = 200;
+            res.ContentType = "application/x-ndjson; charset=utf-8";
+            res.SendChunked = true;
+            bool gone = false;
+            Action<Dictionary<string, object>> emit = o =>
             {
-                Git(Path.GetTempPath(), CredentialBlock(cred), 20000, false, "credential", "reject");
-                throw new ApiException(401, "GitHub did not accept that sign-in. Please try again.");
+                byte[] line = Encoding.UTF8.GetBytes(J.Str(o) + "\n");
+                try { lock (res) { res.OutputStream.Write(line, 0, line.Length); res.OutputStream.Flush(); } } catch { gone = true; }
+            };
+
+            var output = new StringBuilder();
+            DataReceivedEventHandler onLine = (s, e) =>
+            {
+                if (e.Data == null) return;
+                lock (output) output.AppendLine(e.Data);
+                // The CLI has worded this line in more than one way across versions; all of them carry XXXX-XXXX.
+                Match m = Regex.Match(e.Data, @"one-time code\W{0,3}([A-Z0-9]{4}-[A-Z0-9]{4})", RegexOptions.IgnoreCase);
+                if (m.Success) emit(J.Make("code", m.Groups[1].Value, "url", "https://github.com/login/device"));
+            };
+            using (var p = new Process { StartInfo = StartInfo(_gh, Path.GetTempPath(), new[] { "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web" }) })
+            {
+                p.OutputDataReceived += onLine;
+                p.ErrorDataReceived += onLine;
+                p.Start();
+                p.BeginOutputReadLine();
+                p.BeginErrorReadLine();
+                try { p.StandardInput.Close(); } catch { }
+                var started = DateTime.UtcNow;
+                while (!p.WaitForExit(2000))
+                {
+                    emit(J.Make("waiting", true));                       // also tells us if the window went away
+                    if (gone || (DateTime.UtcNow - started).TotalMinutes > 14)
+                    {
+                        try { p.Kill(); } catch { }
+                        if (!gone) emit(J.Make("error", "The sign-in code expired before it was used. Try again."));
+                        return;
+                    }
+                }
+                p.WaitForExit();
+                if (p.ExitCode != 0)
+                {
+                    string text;
+                    lock (output) text = output.ToString();
+                    string last = text.Split('\n').Select(x => x.Trim()).LastOrDefault(x => x != "" && !x.Contains("one-time code")) ?? "";
+                    emit(J.Make("error", "GitHub sign-in did not finish" + (last != "" ? ": " + last : ".")));
+                    return;
+                }
             }
-            Git(Path.GetTempPath(), CredentialBlock(cred), 20000, false, "credential", "approve");   // remembered by Windows, not by Hearth
-            return Status();
+            string login = SignedInAs();
+            if (login == null) emit(J.Make("error", "GitHub sign-in did not finish."));
+            else emit(J.Make("done", true, "login", login));
         }
 
         public static object SignOut()
         {
-            RequireGit();
-            var cred = CredentialFill(false);
-            if (cred != null) Git(Path.GetTempPath(), CredentialBlock(cred), 20000, false, "credential", "reject");
-            lock (Lock) { _cachedKey = null; _cachedUser = null; }
-            if (CredentialFill(false) != null && SignsInThroughCli())
-                throw new ApiException(409, "This PC is signed in through the GitHub CLI, which Hearth cannot sign out. Run \"gh auth logout\" to sign out.");
+            RequireTools();
+            string login = SignedInAs();
+            if (login != null)
+            {
+                var r = Gh(Path.GetTempPath(), 30000, "auth", "logout", "--hostname", "github.com", "--user", login);
+                if (!r.Ok) throw new ApiException(500, Problem(r, "Could not sign out"));
+            }
             return Status();
         }
 
@@ -301,9 +284,10 @@ namespace Hearth
         public static object ProjectStatus(string projectId)
         {
             string root = ProjectRoot(projectId);
-            var s = J.Make("git", GitPath() != null, "repo", false, "nested", false, "remote", "", "web", "", "branch", "", "changes", 0, "commits", false,
+            Locate();
+            var s = J.Make("repo", false, "nested", false, "remote", "", "web", "", "branch", "", "changes", 0, "commits", false,
                 "suggested", Regex.Replace(Regex.Replace(J.S(Store.Project(projectId), "name", "project").Trim(), @"[^A-Za-z0-9._-]+", "-"), @"^-+|-+$", ""));
-            if (GitPath() == null) return s;
+            if (_git == null) return s;
             string top;
             string kind = RepoKind(root, out top);
             if (kind == "nested") { s["nested"] = true; s["top"] = top; return s; }
@@ -317,7 +301,7 @@ namespace Hearth
             if (rem.Ok && rem.Out != "")
             {
                 string web = WebUrl(rem.Out);
-                s["remote"] = web ?? "another Git server";      // never echo a raw remote: it could embed credentials
+                s["remote"] = web ?? "another Git server";      // never echo a raw remote address
                 s["web"] = web ?? "";
                 if (web != null && (bool)s["commits"])
                 {
@@ -357,12 +341,9 @@ namespace Hearth
         {
             string projectId = J.S(body, "project");
             string root = ProjectRoot(projectId);
-            RequireGit();
-            var cred = CredentialFill(false);
-            var me = cred == null ? null : Me(cred["password"]);
-            if (me == null) throw new ApiException(401, "Sign in to GitHub first.");
-            string token = cred["password"];
-            string login = J.S(me, "login");
+            RequireTools();
+            string login = SignedInAs();
+            if (login == null) throw new ApiException(401, "Sign in to GitHub first.");
 
             res.StatusCode = 200;
             res.ContentType = "application/x-ndjson; charset=utf-8";
@@ -383,7 +364,7 @@ namespace Hearth
                 if (kind == "none")
                 {
                     var init = Git(root, "init", "-b", "main");
-                    if (!init.Ok) throw new ApiException(500, GitError(init, "Could not prepare the folder for Git"));
+                    if (!init.Ok) throw new ApiException(500, Problem(init, "Could not prepare the folder for Git"));
                 }
 
                 string remoteUrl = "";
@@ -399,20 +380,17 @@ namespace Hearth
 
                 emit(J.Make("step", "Leaving out protected files"));
                 WriteExcludes(root, prot);
-                var add = Git(root, null, 300000, false, "add", "-A");
-                if (!add.Ok) throw new ApiException(500, GitError(add, "Could not collect the project's files"));
+                var add = Git(root, "add", "-A");
+                if (!add.Ok) throw new ApiException(500, Problem(add, "Could not collect the project's files"));
 
                 // The guardrail that matters: nothing locked may be in what gets uploaded, even if it was tracked before.
-                var tracked = Git(root, null, 120000, false, "ls-files");
+                var tracked = Git(root, "ls-files");
                 var files = tracked.Out == "" ? new string[0] : tracked.Out.Split('\n').Select(x => x.Trim()).Where(x => x != "").ToArray();
                 var lockedFiles = files.Where(f => Guard.Reason(f, false, prot) != null).ToList();
                 if (lockedFiles.Count > 0)
-                {
-                    if (kind == "none") Git(root, "rm", "-r", "--cached", "-q", ".");
                     throw new ApiException(403, "Upload stopped: " + lockedFiles.Count + " protected file" + (lockedFiles.Count == 1 ? " is" : "s are") +
                         " already tracked by Git in this project (" + string.Join(", ", lockedFiles.Take(4)) + (lockedFiles.Count > 4 ? ", …" : "") +
                         "). Remove " + (lockedFiles.Count == 1 ? "it" : "them") + " from Git first; Hearth will not upload protected files.");
-                }
                 if (files.Length == 0) throw new ApiException(400, "There is nothing to upload: the folder has no files that are allowed to leave this PC.");
 
                 bool hasCommits = Git(root, "rev-parse", "--verify", "-q", "HEAD").Ok;
@@ -425,51 +403,56 @@ namespace Hearth
                     var args = new List<string>();
                     if (Git(root, "config", "user.email").Out == "")
                     {
-                        // No identity configured: use GitHub's private no-reply address rather than a real email.
+                        // No author configured in Git: use GitHub's private no-reply address rather than a real email.
+                        var who = Gh(root, 30000, "api", "user");
+                        var me = who.Ok ? J.Obj(J.Parse(who.Out)) : null;
+                        if (me == null || J.L(me, "id") == 0) throw new ApiException(502, "Could not read your GitHub account details.");
                         args.AddRange(new[] { "-c", "user.name=" + (J.S(me, "name", "") != "" ? J.S(me, "name") : login),
                                               "-c", "user.email=" + J.L(me, "id") + "+" + login + "@users.noreply.github.com" });
                     }
                     args.AddRange(new[] { "commit", "-q", "-m", message });
-                    var commit = Git(root, null, 300000, false, args.ToArray());
-                    if (!commit.Ok) throw new ApiException(500, GitError(commit, "Could not save the snapshot"));
+                    var commit = Git(root, args.ToArray());
+                    if (!commit.Ok) throw new ApiException(500, Problem(commit, "Could not save the snapshot"));
                 }
 
-                string web;
                 if (remoteUrl == "")
                 {
                     object priv = J.Get(body, "private");
                     bool isPrivate = !(priv is bool) || (bool)priv;        // private unless the user explicitly chose public
-                    emit(J.Make("step", "Creating " + (isPrivate ? "private" : "public") + " repository " + login + "/" + repoName));
-                    int status;
-                    var created = Api("POST", "/user/repos", token,
-                        J.Make("name", repoName, "private", isPrivate, "description", J.S(body, "description", "").Trim(), "auto_init", false), out status);
-                    if (status == 422) throw new ApiException(409, "You already have a repository called \"" + repoName + "\" on GitHub. Choose another name.");
-                    if (status >= 400) throw new ApiException(502, "GitHub could not create the repository (" + status + (J.S(created, "message", "") != "" ? ": " + J.S(created, "message") : "") + ").");
-                    string clone = J.S(created, "clone_url", "");
-                    web = WebUrl(clone);
-                    if (web == null) throw new ApiException(502, "GitHub returned an unexpected repository address.");
-                    var addRemote = Git(root, "remote", "add", "origin", clone);
-                    if (!addRemote.Ok) throw new ApiException(500, GitError(addRemote, "Could not connect the folder to the new repository"));
+                    emit(J.Make("step", "Creating " + (isPrivate ? "private" : "public") + " repository " + login + "/" + repoName + " and uploading"));
+                    var create = new List<string> { "repo", "create", repoName, isPrivate ? "--private" : "--public", "--source", ".", "--remote", "origin", "--push" };
+                    string description = J.S(body, "description", "").Trim();
+                    if (description != "") { create.Add("--description"); create.Add(description); }
+                    var made = Gh(root, 1200000, create.ToArray());
+                    if (!made.Ok)
+                    {
+                        if ((made.Err + made.Out).IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0)
+                            throw new ApiException(409, "You already have a repository called \"" + repoName + "\" on GitHub. Choose another name.");
+                        throw new ApiException(502, Problem(made, "GitHub could not create the repository"));
+                    }
                 }
-                else web = WebUrl(remoteUrl);
+                else
+                {
+                    emit(J.Make("step", "Uploading to GitHub"));
+                    // Let the GitHub CLI supply the sign-in for this one push, without changing Git's settings.
+                    var push = Git(root, "-c", "credential.helper=", "-c", "credential.https://github.com.helper=!\"" + _gh.Replace('\\', '/') + "\" auth git-credential",
+                        "push", "-u", "origin", "HEAD");
+                    if (!push.Ok) throw new ApiException(502, Problem(push, "The upload did not finish"));
+                }
 
-                emit(J.Make("step", "Uploading to GitHub"));
-                var push = Git(root, null, 1200000, false, "push", "-u", "origin", "HEAD");
-                if (!push.Ok) throw new ApiException(502, GitError(push, "The upload did not finish"));
-
-                emit(J.Make("done", true, "url", web, "files", files.Length,
-                    "commit", Git(root, "rev-parse", "--short", "HEAD").Out));
+                string web = WebUrl(Git(root, "remote", "get-url", "origin").Out) ?? "";
+                emit(J.Make("done", true, "url", web, "files", files.Length, "commit", Git(root, "rev-parse", "--short", "HEAD").Out));
             }
             catch (ApiException ex) { emit(J.Make("error", ex.Message)); }
             catch (Exception ex) { emit(J.Make("error", "The upload failed: " + ex.Message)); }
         }
 
-        /// <summary>Opens a page in the user's own browser (where they are signed in). Only the two sites Hearth links to.</summary>
+        /// <summary>Opens a page in the user's own browser (where they are signed in). Only the sites Hearth links to.</summary>
         public static void OpenInBrowser(string url)
         {
             Uri u;
-            if (!Uri.TryCreate(url, UriKind.Absolute, out u) || u.Scheme != "https" || (u.Host != "github.com" && u.Host != "git-scm.com"))
-                throw new ApiException(400, "Hearth only opens github.com and git-scm.com links.");
+            if (!Uri.TryCreate(url, UriKind.Absolute, out u) || u.Scheme != "https" || (u.Host != "github.com" && u.Host != "git-scm.com" && u.Host != "cli.github.com"))
+                throw new ApiException(400, "Hearth only opens github.com, cli.github.com and git-scm.com links.");
             Process.Start(new ProcessStartInfo(u.AbsoluteUri) { UseShellExecute = true });
         }
     }

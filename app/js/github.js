@@ -1,16 +1,16 @@
 // GitHub: sign in from inside Hearth and upload a project to your own account.
 //
-// Sign-in happens in GitHub's own window (opened by Git Credential Manager); this page never sees a
-// password or token. Uploads run only when the button is pressed, default to a private repository,
+// Sign-in and uploading are carried out by the official GitHub CLI and Git; Hearth only starts them.
+// This page never sees a password or token: the one-time code it shows is typed into github.com by the user. Uploads run only when the button is pressed, default to a private repository,
 // and leave out every protected file.
 
-import { h, icon, api, ndjson, S, emit, clear, toast, fail, modal, confirmDialog } from './util.js';
+import { h, icon, api, ndjson, S, emit, clear, toast, fail, modal, confirmDialog, copyText } from './util.js';
 
-export const github = { status: { git: false, signedIn: false, login: '' } };
+export const github = { status: { git: false, gh: false, signedIn: false, login: '' } };
 
 export async function refreshGitHub() {
   try { github.status = await api('/api/github/status'); }
-  catch { github.status = { git: false, signedIn: false, login: '' }; }
+  catch { github.status = { git: false, gh: false, signedIn: false, login: '' }; }
   emit('github');
   return github.status;
 }
@@ -32,26 +32,48 @@ export function openGitHub() {
   const drawAccount = () => {
     const st = github.status;
     clear(account);
-    if (!st.git) {
+    if (!st.git || !st.gh) {
+      const missing = [!st.git ? 'Git for Windows' : '', !st.gh ? 'the GitHub CLI' : ''].filter(Boolean).join(' and ');
       account.append(
-        h('div', { class: 'gh-title' }, icon('alert'), 'Git for Windows is needed'),
-        h('div', { class: 'muted' }, 'Hearth uses Git to sign in to GitHub and to upload projects. Install Git for Windows, then close and reopen Hearth.'),
-        h('div', { class: 'row' }, h('button', { class: 'btn', onClick: () => openUrl('https://git-scm.com/download/win') }, icon('download'), 'Get Git for Windows')));
+        h('div', { class: 'gh-title' }, icon('alert'), 'Two free tools are needed'),
+        h('div', { class: 'muted' }, 'Hearth hands GitHub sign-in and uploading to the official tools, so it never handles your password. This PC is missing ' + missing + '. Install, then press Check again.'),
+        h('div', { class: 'row' },
+          !st.git ? h('button', { class: 'btn', onClick: () => openUrl('https://git-scm.com/download/win') }, icon('download'), 'Get Git for Windows') : null,
+          !st.gh ? h('button', { class: 'btn', onClick: () => openUrl('https://cli.github.com/') }, icon('download'), 'Get the GitHub CLI') : null,
+          h('button', { class: 'btn ghost', onClick: () => refreshGitHub().then(() => { drawAccount(); drawProject(); }) }, icon('refresh'), 'Check again')));
       return;
     }
     if (!st.signedIn) {
       const btn = h('button', { class: 'btn primary', onClick: async () => {
-        clear(account).append(busyRow('Finish signing in in the GitHub window that opened…'));
+        clear(account).append(busyRow('Starting GitHub sign-in…'));
+        const ctl = new AbortController();
         try {
-          github.status = await api('/api/github/signin', { body: {} });
-          emit('github');
-          toast('Signed in to GitHub as ' + github.status.login + '.');
+          const res = await api('/api/github/signin', { body: {}, stream: true, signal: ctl.signal });
+          for await (const ev of ndjson(res)) {
+            if (ev.code) {
+              copyText(ev.code);
+              openUrl(ev.url);        // the page where the code is entered, in the user's own browser
+              clear(account).append(
+                h('div', { class: 'gh-title' }, 'Enter this code on GitHub'),
+                h('div', { class: 'gh-code' }, ev.code),
+                h('div', { class: 'muted' }, 'Your browser is opening github.com. Sign in there if asked, type or paste this code (it is already copied), and approve. This screen updates by itself when you are done.'),
+                h('div', { class: 'row' },
+                  h('button', { class: 'btn sm', onClick: () => copyText(ev.code).then((ok) => ok && toast('Code copied.')) }, icon('copy', 'sm'), 'Copy code'),
+                  h('button', { class: 'btn sm ghost', onClick: () => openUrl(ev.url) }, icon('globe', 'sm'), 'Open github.com again'),
+                  h('span', { class: 'grow' }),
+                  h('button', { class: 'btn sm ghost', onClick: () => ctl.abort() }, 'Cancel')),
+                busyRow('Waiting for you to approve on GitHub…'));
+            }
+            if (ev.error) toast(ev.error, 'error', 7000);
+            if (ev.done) toast('Signed in to GitHub as ' + ev.login + '.');
+          }
         } catch (e) { fail(e); }
+        await refreshGitHub();
         drawAccount(); drawProject();
       } }, 'Sign in with GitHub');
       account.append(
         h('div', { class: 'gh-title' }, 'Not signed in'),
-        h('div', { class: 'muted' }, 'Sign in to upload projects from this PC to your GitHub account. GitHub\'s own sign-in window opens; Hearth never sees your password.'),
+        h('div', { class: 'muted' }, 'Sign in to upload projects from this PC to your GitHub account. You approve the sign-in on github.com in your browser; Hearth never sees your password.'),
         h('div', { class: 'row' }, btn));
       return;
     }
@@ -59,7 +81,7 @@ export function openGitHub() {
       h('div', { class: 'row' },
         h('div', { class: 'grow' },
           h('div', { class: 'gh-title' }, h('span', { class: 'dot ok' }), 'Signed in as ' + st.login),
-          h('div', { class: 'muted' }, st.viaCli ? 'Using the GitHub CLI sign-in on this PC.' : 'Your sign-in is kept by Windows Credential Manager, not by Hearth.')),
+          h('div', { class: 'muted' }, 'Through the GitHub CLI on this PC. Your sign-in is kept by Windows, not by Hearth.')),
         h('button', { class: 'btn sm ghost', onClick: async () => {
           try { github.status = await api('/api/github/signout', { body: {} }); emit('github'); toast('Signed out of GitHub.'); }
           catch (e) { fail(e); }
@@ -93,7 +115,7 @@ export function openGitHub() {
     const st = github.status;
     const p = S.project;
     clear(project);
-    project.hidden = !st.git || !st.signedIn;
+    project.hidden = !st.git || !st.gh || !st.signedIn;
     if (project.hidden) return;
     project.append(h('div', { class: 'gh-title' }, icon('folder'), p.name));
     if (!p.path || p.missing) {

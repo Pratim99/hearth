@@ -518,3 +518,4 @@ input[type=range] { flex: 1; accent-color: var(--accent); height: 4px; }
 .gh-step.run::before { content: "…"; color: var(--accent); }
 .gh-step.bad { color: var(--danger); }
 .gh-step.bad::before { content: "✕"; color: var(--danger); }
+.gh-code { font: 600 30px/1.2 var(--mono); letter-spacing: .12em; padding: 12px 16px; border-radius: 10px; background: var(--bg); border: 1px dashed var(--border-strong); text-align: center; user-select: all; }

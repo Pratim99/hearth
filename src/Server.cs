@@ -325,13 +325,13 @@ namespace Hearth
                     return;
                 }
 
-                // ---- GitHub (sign-in through Git's credential manager; uploads only when the user asks)
+                // ---- GitHub (sign-in and uploads are carried out by the GitHub CLI and Git; only when the user asks)
                 case "/api/github/status":
                     SendJson(res, GitHub.Status());
                     return;
                 case "/api/github/signin":
                     RequirePost(post);
-                    SendJson(res, GitHub.SignIn());
+                    GitHub.SignIn(res);
                     return;
                 case "/api/github/signout":
                     RequirePost(post);
