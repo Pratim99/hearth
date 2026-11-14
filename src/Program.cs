@@ -59,8 +59,8 @@ namespace Hearth
                     }
 
                     string appDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app");
-                    if (!File.Exists(Path.Combine(appDir, "index.html")))
-                        throw new FileNotFoundException("The 'app' folder is missing next to Hearth.exe.");
+                    if (!File.Exists(Path.Combine(appDir, "index.html")) && typeof(Program).Assembly.GetManifestResourceStream("app/index.html") == null)
+                        throw new FileNotFoundException("Hearth's interface files are missing from this build.");
 
                     var server = new Server(appDir);
                     server.Start(port);

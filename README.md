@@ -40,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 .\Hearth.exe
 ```
 
-`build.ps1` compiles `src\*.cs` with the C# compiler that ships with Windows and writes `Hearth.exe` next to the `app` folder, which it needs at run time. The interface is plain HTML, CSS and JavaScript in `app\` and needs no build step.
+`build.ps1` compiles `src\*.cs` with the C# compiler that ships with Windows and builds the interface (`app\`) into the result, so `Hearth.exe` is a single file that runs on its own from any folder. The interface is plain HTML, CSS and JavaScript; while developing, an `app` folder next to the exe takes priority over the built-in copy, so interface edits show up without a rebuild.
 
 ## Layout
 

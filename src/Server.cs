@@ -504,17 +504,42 @@ namespace Hearth
 
         // ---------------------------------------------------------------- static files
 
+        /// <summary>
+        /// The interface files are built into Hearth.exe, so the exe runs on its own from any folder.
+        /// A loose "app" folder next to the exe takes priority, which lets the interface be edited
+        /// without rebuilding while developing.
+        /// </summary>
+        byte[] LoadAsset(string rel)
+        {
+            try
+            {
+                string full = Path.GetFullPath(Path.Combine(_appDir, rel.Replace('/', '\\')));
+                if (full.StartsWith(_appDir + "\\", StringComparison.OrdinalIgnoreCase) && File.Exists(full)) return File.ReadAllBytes(full);
+            }
+            catch { }
+            using (var s = typeof(Server).Assembly.GetManifestResourceStream("app/" + rel))
+            {
+                if (s == null) return null;
+                using (var ms = new MemoryStream())
+                {
+                    s.CopyTo(ms);
+                    return ms.ToArray();
+                }
+            }
+        }
+
         void Static(HttpListenerResponse res, string path)
         {
             if (path == "/" || path == "") path = "/index.html";
-            string full = Path.GetFullPath(Path.Combine(_appDir, Uri.UnescapeDataString(path).TrimStart('/').Replace('/', '\\')));
-            if (!full.StartsWith(_appDir + "\\", StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
+            string rel = Uri.UnescapeDataString(path).TrimStart('/');
+            byte[] bytes = LoadAsset(rel);
+            if (bytes == null)
             {
                 SendText(res, 404, "Not found");
                 return;
             }
             string type;
-            if (!Mime.TryGetValue(Path.GetExtension(full), out type)) type = "application/octet-stream";
+            if (!Mime.TryGetValue(Path.GetExtension(rel), out type)) type = "application/octet-stream";
             if (type.StartsWith("text/html"))
             {
                 // The interface can only talk to this local server: no CDNs, no remote scripts, no outside calls.
@@ -522,7 +547,6 @@ namespace Hearth
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
                     "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
             }
-            byte[] bytes = File.ReadAllBytes(full);
             res.StatusCode = 200;
             res.ContentType = type;
             res.ContentLength64 = bytes.Length;
